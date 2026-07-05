@@ -156,6 +156,10 @@
     border-color:var(--green);
     color:#06150e;
   }
+  .mode-btn:disabled{
+    opacity:0.35;
+    cursor:not-allowed;
+  }
 
   .pad-area{
     padding:24px 18px 10px;
@@ -268,11 +272,6 @@
     </div>
   </div>
 
-  <div class="conn-row">
-    <input id="wsAddress" type="text" placeholder="ws://raspberrypi.local:5000/ws" value="">
-    <button id="connectBtn">Connect</button>
-  </div>
-
   <div class="mode-row">
     <button class="mode-btn active" id="manualBtn" data-mode="MANUAL">Manual</button>
     <button class="mode-btn" id="autoBtn" data-mode="AUTO">Auto</button>
@@ -310,8 +309,6 @@
 </div>
 
 <script>
-  const wsAddressInput = document.getElementById('wsAddress');
-  const connectBtn = document.getElementById('connectBtn');
   const statusDot = document.getElementById('statusDot');
   const statusText = document.getElementById('statusText');
   const logEl = document.getElementById('log');
@@ -322,19 +319,16 @@
 
   let socket = null;
   let lastCmd = null;
-  let connState = 'offline';   // 'offline' | 'pending' | 'live'
+  let connState = 'offline';   // browser <-> server: 'offline' | 'pending' | 'live'
+  let roverOnline = false;     // server <-> Pi link
   let currentMode = 'MANUAL';  // 'MANUAL' | 'AUTO'
+  let reconnectTimer = null;
 
-  // Auto-fill the WS address based on how the page itself was loaded.
-  window.addEventListener('DOMContentLoaded', () => {
+  function wsUrl(){
     const isHttps = window.location.protocol === 'https:';
     const wsProtocol = isHttps ? 'wss:' : 'ws:';
-    if (window.location.host) {
-      wsAddressInput.value = `${wsProtocol}//${window.location.host}/ws`;
-    } else {
-      wsAddressInput.value = "ws://raspberrypi.local:5000/ws";
-    }
-  });
+    return `${wsProtocol}//${window.location.host}/ws`;
+  }
 
   function log(msg, cls){
     const line = document.createElement('div');
@@ -344,17 +338,43 @@
     logEl.scrollTop = logEl.scrollHeight;
   }
 
+  function ready(){
+    // everything is usable only once browser<->server AND server<->Pi are both live
+    return connState === 'live' && roverOnline;
+  }
+
   function refreshPadState(){
-    const enabled = (connState === 'live' && currentMode === 'MANUAL');
+    const enabled = ready() && currentMode === 'MANUAL';
     padButtons.forEach(b => b.disabled = !enabled);
-    padOverlay.classList.toggle('show', currentMode === 'AUTO');
+    padOverlay.classList.toggle('show', ready() && currentMode === 'AUTO');
+    manualBtn.disabled = !ready();
+    autoBtn.disabled = !ready();
   }
 
   function setConnStatus(state){
     connState = state;
-    statusDot.className = 'dot' + (state === 'live' ? ' live' : state === 'pending' ? ' pending' : '');
-    statusText.textContent = state === 'live' ? 'ONLINE' : state === 'pending' ? 'CONNECTING' : 'OFFLINE';
+    if(state !== 'live') roverOnline = false; // losing the server link means losing the rover link too
+    updateStatusDisplay();
     refreshPadState();
+  }
+
+  function setRoverOnline(online){
+    roverOnline = online;
+    updateStatusDisplay();
+    refreshPadState();
+  }
+
+  function updateStatusDisplay(){
+    let cls = '', text = 'OFFLINE';
+    if(connState === 'pending'){
+      cls = 'pending'; text = 'CONNECTING';
+    } else if(connState === 'live' && !roverOnline){
+      cls = 'pending'; text = 'ROVER OFFLINE';
+    } else if(connState === 'live' && roverOnline){
+      cls = 'live'; text = 'ONLINE';
+    }
+    statusDot.className = 'dot' + (cls ? ' ' + cls : '');
+    statusText.textContent = text;
   }
 
   function setModeUI(newMode){
@@ -368,8 +388,8 @@
   }
 
   function requestMode(newMode){
-    if(!socket || socket.readyState !== WebSocket.OPEN){
-      log('// connect first before switching mode', 'err');
+    if(!ready()){
+      log('// rover not connected yet', 'err');
       return;
     }
     socket.send('MODE:' + newMode);
@@ -380,33 +400,21 @@
   autoBtn.addEventListener('click', () => requestMode('AUTO'));
 
   function connect(){
-    const addr = wsAddressInput.value.trim();
-    if(!addr){ log('// enter a websocket address', 'err'); return; }
-
     setConnStatus('pending');
-    log('// connecting to ' + addr);
+    log('// connecting to server...');
 
-    try{
-      socket = new WebSocket(addr);
-    }catch(e){
-      log('// invalid address: ' + e.message, 'err');
-      setConnStatus('offline');
-      return;
-    }
+    socket = new WebSocket(wsUrl());
 
     socket.onopen = () => {
       setConnStatus('live');
-      log('// connection established');
-      connectBtn.textContent = 'Disconnect';
-      connectBtn.classList.add('disconnect');
+      log('// server connection established');
     };
 
     socket.onclose = () => {
       setConnStatus('offline');
-      log('// connection closed');
-      connectBtn.textContent = 'Connect';
-      connectBtn.classList.remove('disconnect');
+      log('// server connection lost, retrying...', 'err');
       socket = null;
+      scheduleReconnect();
     };
 
     socket.onerror = () => {
@@ -416,30 +424,29 @@
     socket.onmessage = (evt) => {
       const msg = evt.data;
       log('< ' + msg);
-      // sync UI if the Pi confirms or reports the active mode
+
       if(msg.startsWith('MODE:')){
         setModeUI(msg.split(':')[1]);
       } else if(msg.startsWith('ACK:MODE:')){
         setModeUI(msg.split(':')[2]);
+      } else if(msg === 'SYS:rover connected'){
+        setRoverOnline(true);
+      } else if(msg.startsWith('ERR:rover is offline')){
+        setRoverOnline(false);
       }
     };
   }
 
-  function disconnect(){
-    if(socket) socket.close();
+  function scheduleReconnect(){
+    if(reconnectTimer) return;
+    reconnectTimer = setTimeout(() => {
+      reconnectTimer = null;
+      connect();
+    }, 2000);
   }
 
-  connectBtn.addEventListener('click', () => {
-    if(socket && socket.readyState === WebSocket.OPEN){
-      disconnect();
-    } else {
-      connect();
-    }
-  });
-
   function sendCmd(cmd, btn){
-    if(!socket || socket.readyState !== WebSocket.OPEN) return;
-    if(currentMode !== 'MANUAL') return;
+    if(!ready() || currentMode !== 'MANUAL') return;
     socket.send(cmd);
     log('> ' + cmd);
     if(btn) btn.classList.add('active');
@@ -448,7 +455,7 @@
 
   function releaseCmd(btn){
     if(btn) btn.classList.remove('active');
-    if(socket && socket.readyState === WebSocket.OPEN && currentMode === 'MANUAL' && lastCmd !== 'S'){
+    if(ready() && currentMode === 'MANUAL' && lastCmd !== 'S'){
       sendCmd('S', document.querySelector('.pad-btn.stop'));
     }
   }
@@ -472,7 +479,7 @@
 
   window.addEventListener('keydown', (e) => {
     const cmd = keyMap[e.key];
-    if(!cmd || activeKeys.has(e.key) || currentMode !== 'MANUAL') return;
+    if(!cmd || activeKeys.has(e.key) || !ready() || currentMode !== 'MANUAL') return;
     activeKeys.add(e.key);
     e.preventDefault();
     const btn = document.querySelector('.pad-btn[data-cmd="' + cmd + '"]');
@@ -490,6 +497,7 @@
 
   setConnStatus('offline');
   setModeUI('MANUAL');
+  connect();
 </script>
 
 </body>
