@@ -36,5 +36,5 @@ def chatbot(ws):
             ws.send(f"ERR:unknown command {cmd}")
 
 if __name__ == '__main__':
-    # Runs the unified server on Port 5000
-    app.run(host='0.0.0.0', port=5000, debug=True)
+    # Runs the unified server on Port 8000
+    app.run(host='0.0.0.0', port=8000, debug=True)
