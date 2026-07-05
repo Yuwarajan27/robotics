@@ -1,0 +1,398 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>RC :: Rover Console</title>
+<style>
+  :root{
+    --bg: #0d1210;
+    --panel: #131b18;
+    --panel-edge: #223028;
+    --grid: #1a2420;
+    --amber: #ffb347;
+    --amber-dim: #7a5a26;
+    --green: #5ee6a0;
+    --green-dim: #2a5c46;
+    --red: #ff5c5c;
+    --text: #d8e6de;
+    --text-dim: #6f8378;
+    --mono: "JetBrains Mono", "Courier New", monospace;
+  }
+
+  *{box-sizing:border-box;}
+
+  body{
+    margin:0;
+    min-height:100vh;
+    background:
+      linear-gradient(var(--grid) 1px, transparent 1px) 0 0/100% 28px,
+      linear-gradient(90deg, var(--grid) 1px, transparent 1px) 0 0/28px 100%,
+      var(--bg);
+    color:var(--text);
+    font-family:var(--mono);
+    display:flex;
+    align-items:center;
+    justify-content:center;
+    padding:24px;
+  }
+
+  .console{
+    width:100%;
+    max-width:460px;
+    background:var(--panel);
+    border:1px solid var(--panel-edge);
+    border-radius:6px;
+    box-shadow: 0 0 0 1px #000, 0 20px 60px rgba(0,0,0,0.5);
+    overflow:hidden;
+  }
+
+  .console-header{
+    display:flex;
+    align-items:center;
+    justify-content:space-between;
+    padding:14px 18px;
+    border-bottom:1px solid var(--panel-edge);
+    background:
+      repeating-linear-gradient(135deg, rgba(255,255,255,0.02) 0 2px, transparent 2px 8px);
+  }
+
+  .console-header h1{
+    font-size:13px;
+    letter-spacing:0.18em;
+    text-transform:uppercase;
+    margin:0;
+    color:var(--text);
+    font-weight:600;
+  }
+  .console-header h1 span{ color:var(--amber); }
+
+  .status{
+    display:flex;
+    align-items:center;
+    gap:6px;
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    color:var(--text-dim);
+  }
+  .dot{
+    width:8px; height:8px; border-radius:50%;
+    background:var(--red);
+    box-shadow:0 0 8px var(--red);
+    transition:all .2s ease;
+  }
+  .dot.live{ background:var(--green); box-shadow:0 0 8px var(--green); }
+  .dot.pending{ background:var(--amber); box-shadow:0 0 8px var(--amber); animation:pulse 1s infinite; }
+  @keyframes pulse{ 50%{opacity:0.35;} }
+
+  .conn-row{
+    display:flex;
+    gap:8px;
+    padding:16px 18px;
+    border-bottom:1px solid var(--panel-edge);
+  }
+  .conn-row input{
+    flex:1;
+    background:#0a0f0d;
+    border:1px solid var(--panel-edge);
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:13px;
+    padding:9px 10px;
+    border-radius:4px;
+    outline:none;
+  }
+  .conn-row input:focus{ border-color:var(--amber-dim); }
+  .conn-row button{
+    background:var(--green-dim);
+    color:#eafff3;
+    border:1px solid #3a7a5e;
+    border-radius:4px;
+    padding:9px 16px;
+    font-family:var(--mono);
+    font-size:12px;
+    letter-spacing:0.06em;
+    text-transform:uppercase;
+    cursor:pointer;
+    transition:filter .15s;
+  }
+  .conn-row button:hover{ filter:brightness(1.2); }
+  .conn-row button.disconnect{
+    background:#5c2a2a;
+    border-color:#7a3a3a;
+  }
+
+  .pad-area{
+    padding:24px 18px 10px;
+  }
+
+  .dpad{
+    display:grid;
+    grid-template-columns:repeat(3, 1fr);
+    grid-template-rows:repeat(3, 72px);
+    gap:8px;
+    max-width:280px;
+    margin:0 auto;
+  }
+
+  .pad-btn{
+    background:#0f1613;
+    border:1px solid var(--panel-edge);
+    border-radius:6px;
+    color:var(--text);
+    font-family:var(--mono);
+    font-size:11px;
+    letter-spacing:0.08em;
+    text-transform:uppercase;
+    display:flex;
+    flex-direction:column;
+    align-items:center;
+    justify-content:center;
+    gap:4px;
+    cursor:pointer;
+    user-select:none;
+    -webkit-user-select:none;
+    -webkit-tap-highlight-color:transparent;
+    transition: background .08s, border-color .08s, transform .05s;
+  }
+  .pad-btn svg{ width:22px; height:22px; stroke:var(--text-dim); fill:none; stroke-width:2.2; }
+  .pad-btn:active, .pad-btn.active{
+    background:var(--amber-dim);
+    border-color:var(--amber);
+    transform:scale(0.96);
+  }
+  .pad-btn:active svg, .pad-btn.active svg{ stroke:var(--amber); }
+  .pad-btn:disabled{ opacity:0.35; cursor:not-allowed; }
+
+  .pad-btn.fwd{ grid-column:2; grid-row:1; }
+  .pad-btn.left{ grid-column:1; grid-row:2; }
+  .pad-btn.stop{ grid-column:2; grid-row:2; }
+  .pad-btn.right{ grid-column:3; grid-row:2; }
+  .pad-btn.back{ grid-column:2; grid-row:3; }
+
+  .pad-btn.stop{
+    background:#1a0f0f;
+    border-color:#4a2424;
+  }
+  .pad-btn.stop svg{ stroke:var(--red); }
+  .pad-btn.stop:active, .pad-btn.stop.active{
+    background:#3a1414;
+    border-color:var(--red);
+  }
+
+  .hint{
+    text-align:center;
+    font-size:10px;
+    color:var(--text-dim);
+    letter-spacing:0.05em;
+    padding:14px 18px 4px;
+  }
+
+  .log{
+    margin:16px 18px 18px;
+    background:#0a0f0d;
+    border:1px solid var(--panel-edge);
+    border-radius:4px;
+    padding:10px 12px;
+    height:96px;
+    overflow-y:auto;
+    font-size:11px;
+    line-height:1.6;
+    color:var(--green);
+  }
+  .log .sys{ color:var(--text-dim); }
+  .log .err{ color:var(--red); }
+</style>
+</head>
+<body>
+
+<div class="console">
+  <div class="console-header">
+    <h1>ROVER<span>_</span>CTL</h1>
+    <div class="status">
+      <div class="dot" id="statusDot"></div>
+      <span id="statusText">OFFLINE</span>
+    </div>
+  </div>
+
+  <div class="conn-row">
+    <input id="wsAddress" type="text" placeholder="ws://13.62.243.139:5000/ws" value="">
+    <button id="connectBtn">Connect</button>
+  </div>
+
+  <div class="pad-area">
+    <div class="dpad">
+      <button class="pad-btn fwd" data-cmd="F" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 19V5M5 12l7-7 7 7"/></svg>
+        Fwd
+      </button>
+      <button class="pad-btn left" data-cmd="L" disabled>
+        <svg viewBox="0 0 24 24"><path d="M19 12H5M12 5l-7 7 7 7"/></svg>
+        Left
+      </button>
+      <button class="pad-btn stop" data-cmd="S" disabled>
+        <svg viewBox="0 0 24 24"><rect x="6" y="6" width="12" height="12" rx="1"/></svg>
+        Stop
+      </button>
+      <button class="pad-btn right" data-cmd="R" disabled>
+        <svg viewBox="0 0 24 24"><path d="M5 12h14M12 5l7 7-7 7"/></svg>
+        Right
+      </button>
+      <button class="pad-btn back" data-cmd="B" disabled>
+        <svg viewBox="0 0 24 24"><path d="M12 5v14M19 12l-7 7-7-7"/></svg>
+        Back
+      </button>
+    </div>
+  </div>
+
+  <div class="hint">Arrow keys also drive · release stops · space = stop</div>
+
+  <div class="log" id="log"><span class="sys">// waiting for connection</span></div>
+</div>
+
+<script>
+  const wsAddressInput = document.getElementById('wsAddress');
+  const connectBtn = document.getElementById('connectBtn');
+  const statusDot = document.getElementById('statusDot');
+  const statusText = document.getElementById('statusText');
+  const logEl = document.getElementById('log');
+  const padButtons = document.querySelectorAll('.pad-btn');
+
+  let socket = null;
+  let lastCmd = null;
+
+  // --- AUTOMATIC WS URL GENERATION ---
+  // When the page loads, this builds ws://13.62.243.139:5000/ws dynamically
+  window.addEventListener('DOMContentLoaded', () => {
+    const isHttps = window.location.protocol === 'https:';
+    const wsProtocol = isHttps ? 'wss:' : 'ws:';
+    
+    // If running via a local file double-click, default back to a hardcoded string
+    if (!window.location.host) {
+      wsAddressInput.value = "ws://13.62.243.139:5000/ws";
+    } else {
+      wsAddressInput.value = `${wsProtocol}//${window.location.host}/ws`;
+    }
+  });
+
+  function log(msg, cls){
+    const line = document.createElement('div');
+    if(cls) line.className = cls;
+    line.textContent = msg;
+    logEl.appendChild(line);
+    logEl.scrollTop = logEl.scrollHeight;
+  }
+
+  function setStatus(state){
+    statusDot.className = 'dot' + (state === 'live' ? ' live' : state === 'pending' ? ' pending' : '');
+    statusText.textContent = state === 'live' ? 'ONLINE' : state === 'pending' ? 'CONNECTING' : 'OFFLINE';
+    padButtons.forEach(b => b.disabled = state !== 'live');
+  }
+
+  function connect(){
+    const addr = wsAddressInput.value.trim();
+    if(!addr){ log('// enter a websocket address', 'err'); return; }
+
+    setStatus('pending');
+    log('// connecting to ' + addr);
+
+    try{
+      socket = new WebSocket(addr);
+    }catch(e){
+      log('// invalid address: ' + e.message, 'err');
+      setStatus('offline');
+      return;
+    }
+
+    socket.onopen = () => {
+      setStatus('live');
+      log('// connection established');
+      connectBtn.textContent = 'Disconnect';
+      connectBtn.classList.add('disconnect');
+    };
+
+    socket.onclose = () => {
+      setStatus('offline');
+      log('// connection closed');
+      connectBtn.textContent = 'Connect';
+      connectBtn.classList.remove('disconnect');
+      socket = null;
+    };
+
+    socket.onerror = () => {
+      log('// websocket error', 'err');
+    };
+
+    socket.onmessage = (evt) => {
+      log('< ' + evt.data);
+    };
+  }
+
+  function disconnect(){
+    if(socket) socket.close();
+  }
+
+  connectBtn.addEventListener('click', () => {
+    if(socket && socket.readyState === WebSocket.OPEN){
+      disconnect();
+    } else {
+      connect();
+    }
+  });
+
+  function sendCmd(cmd, btn){
+    if(!socket || socket.readyState !== WebSocket.OPEN) return;
+    socket.send(cmd);
+    log('> ' + cmd);
+    if(btn) btn.classList.add('active');
+    lastCmd = cmd;
+  }
+
+  function releaseCmd(btn){
+    if(btn) btn.classList.remove('active');
+    if(socket && socket.readyState === WebSocket.OPEN && lastCmd !== 'S'){
+      sendCmd('S', document.querySelector('.pad-btn.stop'));
+    }
+  }
+
+  padButtons.forEach(btn => {
+    const cmd = btn.dataset.cmd;
+
+    // mouse
+    btn.addEventListener('mousedown', () => sendCmd(cmd, btn));
+    btn.addEventListener('mouseup', () => { if(cmd !== 'S') releaseCmd(btn); else btn.classList.remove('active'); });
+    btn.addEventListener('mouseleave', () => { if(btn.classList.contains('active') && cmd !== 'S') releaseCmd(btn); });
+
+    // touch
+    btn.addEventListener('touchstart', (e) => { e.preventDefault(); sendCmd(cmd, btn); }, {passive:false});
+    btn.addEventListener('touchend', (e) => { e.preventDefault(); if(cmd !== 'S') releaseCmd(btn); else btn.classList.remove('active'); }, {passive:false});
+  });
+
+  // keyboard support
+  const keyMap = { ArrowUp:'F', ArrowDown:'B', ArrowLeft:'L', ArrowRight:'R', ' ':'S' };
+  const activeKeys = new Set();
+
+  window.addEventListener('keydown', (e) => {
+    const cmd = keyMap[e.key];
+    if(!cmd || activeKeys.has(e.key)) return;
+    activeKeys.add(e.key);
+    e.preventDefault();
+    const btn = document.querySelector('.pad-btn[data-cmd="' + cmd + '"]');
+    sendCmd(cmd, btn);
+  });
+
+  window.addEventListener('keyup', (e) => {
+    const cmd = keyMap[e.key];
+    if(!cmd) return;
+    activeKeys.delete(e.key);
+    e.preventDefault();
+    const btn = document.querySelector('.pad-btn[data-cmd="' + cmd + '"]');
+    if(cmd !== 'S') releaseCmd(btn); else btn.classList.remove('active');
+  });
+
+  setStatus('offline');
+</script>
+
+</body>
+</html>
